@@ -1,150 +1,121 @@
-import os
-import sqlite3
-from datetime import datetime, date
-
+import logging, os, sqlite3, datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+
+logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# ================= DATABASE =================
+db = sqlite3.connect("data.db", check_same_thread=False)
+c = db.cursor()
 
-conn = sqlite3.connect("data.db", check_same_thread=False)
-cursor = conn.cursor()
-
-cursor.execute("""
+c.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     balance INTEGER DEFAULT 0,
-    invite_by INTEGER,
-    last_checkin TEXT
+    invited_by INTEGER,
+    checkin_date TEXT,
+    total_invite INTEGER DEFAULT 0
 )
 """)
+db.commit()
 
-conn.commit()
-
-# ================= HELPERS =================
-
-def get_user(uid: int):
-    cursor.execute("SELECT * FROM users WHERE user_id=?", (uid,))
-    user = cursor.fetchone()
-    if not user:
-        cursor.execute("INSERT INTO users (user_id) VALUES (?)", (uid,))
-        conn.commit()
-        return get_user(uid)
-    return user
-
-def add_balance(uid, amount):
-    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, uid))
-    conn.commit()
-
-# ================= HANDLERS =================
+def get_user(uid):
+    c.execute("SELECT * FROM users WHERE user_id=?", (uid,))
+    if not c.fetchone():
+        c.execute("INSERT INTO users(user_id) VALUES(?)", (uid,))
+        db.commit()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     get_user(uid)
 
-    keyboard = [
+    kb = [
         [InlineKeyboardButton("💰 Nạp tiền", callback_data="deposit"),
          InlineKeyboardButton("🏧 Rút tiền", callback_data="withdraw")],
         [InlineKeyboardButton("📅 Điểm danh", callback_data="checkin"),
          InlineKeyboardButton("👥 Mời bạn", callback_data="invite")],
-        [InlineKeyboardButton("🎯 Nhiệm vụ", callback_data="tasks"),
+        [InlineKeyboardButton("🎯 Nhiệm vụ", callback_data="task"),
          InlineKeyboardButton("🏆 Đua top", callback_data="top")],
-        [InlineKeyboardButton("💳 Số dư", callback_data="balance"),
-         InlineKeyboardButton("🎁 Giftcode", callback_data="gift")],
-        [InlineKeyboardButton("📞 CSKH", callback_data="support"),
-         InlineKeyboardButton("💼 Đăng ký đại lý", callback_data="agent")]
+        [InlineKeyboardButton("🎁 Giftcode", callback_data="gift"),
+         InlineKeyboardButton("📞 CSKH", callback_data="support")],
+        [InlineKeyboardButton("💼 Đăng ký đại lý", callback_data="agent")]
     ]
+    await update.message.reply_text("🤖 BOT TELE MONEY\nChọn chức năng:", reply_markup=InlineKeyboardMarkup(kb))
 
-    await update.message.reply_text(
-        "🤖 BOT TELE MONEY\n\nChọn chức năng bên dưới:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+    get_user(uid)
 
-# ================= CALLBACK =================
+    if q.data == "deposit":
+        await q.message.reply_text("💰 Gửi bill chuyển khoản để admin duyệt.")
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    elif q.data == "withdraw":
+        await q.message.reply_text("🏧 Nhập số tiền muốn rút & thông tin ngân hàng.")
 
-    uid = query.from_user.id
-    user = get_user(uid)
-    balance = user[1]
+    elif q.data == "checkin":
+        today = str(datetime.date.today())
+        c.execute("SELECT checkin_date FROM users WHERE user_id=?", (uid,))
+        last = c.fetchone()[0]
 
-    if query.data == "deposit":
-        await query.message.reply_text("💰 NẠP TIỀN\n\nAdmin sẽ xử lý thủ công.")
-
-    elif query.data == "withdraw":
-        await query.message.reply_text("🏧 RÚT TIỀN\n\nGửi yêu cầu rút cho admin.")
-
-    elif query.data == "checkin":
-        today = str(date.today())
-        if user[3] == today:
-            await query.message.reply_text("❌ Hôm nay bạn đã điểm danh rồi!")
+        if last == today:
+            await q.message.reply_text("❌ Hôm nay bạn đã điểm danh rồi.")
         else:
-            cursor.execute("UPDATE users SET last_checkin=? WHERE user_id=?", (today, uid))
-            conn.commit()
-            add_balance(uid, 1000)
-            await query.message.reply_text("✅ Điểm danh thành công +1000 VNĐ")
+            c.execute("UPDATE users SET balance=balance+10000, checkin_date=? WHERE user_id=?", (today, uid))
+            db.commit()
+            await q.message.reply_text("✅ Điểm danh thành công +10.000đ")
 
-    elif query.data == "invite":
+    elif q.data == "invite":
         link = f"https://t.me/{context.bot.username}?start={uid}"
-        await query.message.reply_text(
-            f"👥 MỜI BẠN\n\nLink giới thiệu của bạn:\n{link}\n\nMỗi người: +5,000 VNĐ"
+        await q.message.reply_text(f"👥 Link mời bạn:\n{link}\nMỗi lượt +50.000đ")
+
+    elif q.data == "task":
+        await q.message.reply_text(
+            "🎯 Nhiệm vụ ngày:\n"
+            "• Nạp tiền +30%\n"
+            "• Mời 3 bạn +50.000đ\n"
+            "• Rút 50k +15k"
         )
 
-    elif query.data == "tasks":
-        await query.message.reply_text("🎯 NHIỆM VỤ\n\n• Điểm danh: +1000\n• Mời bạn: +5000")
+    elif q.data == "top":
+        c.execute("SELECT user_id,total_invite FROM users ORDER BY total_invite DESC LIMIT 10")
+        rows = c.fetchall()
+        msg = "🏆 TOP MỜI BẠN\n\n"
+        for i,r in enumerate(rows,1):
+            msg += f"{i}. ID {r[0]} — {r[1]} lượt\n"
+        await q.message.reply_text(msg)
 
-    elif query.data == "top":
-        cursor.execute("SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 10")
-        rows = cursor.fetchall()
-        text = "🏆 ĐUA TOP\n\n"
-        for i, r in enumerate(rows, 1):
-            text += f"{i}. {r[0]} — {r[1]} VNĐ\n"
-        await query.message.reply_text(text)
+    elif q.data == "gift":
+        await q.message.reply_text("🎁 Nhập giftcode:")
 
-    elif query.data == "balance":
-        await query.message.reply_text(f"💳 SỐ DƯ HIỆN TẠI: {balance} VNĐ")
+    elif q.data == "support":
+        await q.message.reply_text("📞 CSKH: @admin")
 
-    elif query.data == "gift":
-        await query.message.reply_text("🎁 Nhập giftcode bằng lệnh:\n/gift CODE")
+    elif q.data == "agent":
+        await q.message.reply_text("💼 Điều kiện đại lý:\n• Nạp 5 triệu\n• Hưởng % hoa hồng")
 
-    elif query.data == "support":
-        await query.message.reply_text("📞 CSKH\n\nLiên hệ admin để được hỗ trợ.")
+async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    args = context.args
 
-    elif query.data == "agent":
-        await query.message.reply_text("💼 ĐĂNG KÝ ĐẠI LÝ\n\nLiên hệ admin để xét duyệt.")
+    get_user(uid)
 
-# ================= ADMIN =================
-
-async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    try:
-        uid = int(context.args[0])
-        amount = int(context.args[1])
-        add_balance(uid, amount)
-        await update.message.reply_text(f"✅ Đã cộng {amount} cho {uid}")
-    except:
-        await update.message.reply_text("Sai cú pháp: /add user_id số_tiền")
-
-# ================= MAIN =================
+    if args:
+        ref = int(args[0])
+        if ref != uid:
+            c.execute("SELECT invited_by FROM users WHERE user_id=?", (uid,))
+            if not c.fetchone()[0]:
+                c.execute("UPDATE users SET invited_by=? WHERE user_id=?", (ref, uid))
+                c.execute("UPDATE users SET balance=balance+50000, total_invite=total_invite+1 WHERE user_id=?", (ref,))
+                db.commit()
 
 app = ApplicationBuilder().token(TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("add", admin_add))
-app.add_handler(CallbackQueryHandler(callback_handler))
+app.add_handler(CommandHandler("start", referral))
+app.add_handler(CallbackQueryHandler(buttons))
 
 print("BOT STARTED")
 app.run_polling()
-
