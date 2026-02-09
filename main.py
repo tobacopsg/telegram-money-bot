@@ -4,8 +4,8 @@ from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiosqlite
 
-TOKEN = "BOT_TOKEN"
-ADMIN_ID = 123456789
+TOKEN = "8209807211:AAEuUJmNHk4TzDAdLSxYMKZ7WljYSxe3U5g"
+ADMIN_ID = 6050668835
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
