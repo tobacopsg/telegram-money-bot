@@ -34,7 +34,7 @@ def main_menu():
 # ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 BOT TELE MONEY\n\nChọn chức năng bên dưới:",
+        "🤖 OKVIP BOT KHUYẾN MÃI KÍNH CHÀO\n\nChọn chức năng bên dưới:",
         reply_markup=main_menu()
     )
 
