@@ -1,174 +1,124 @@
-import asyncio, logging, os
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
-import aiosqlite
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 123456789
+TOKEN = "8209807211:AAEuUJmNHk4TzDAdLSxYMKZ7WljYSxe3U5g"
+ADMIN_ID = 6050668835
 
 logging.basicConfig(level=logging.INFO)
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
 
-# ===== STATE =====
-class Form(StatesGroup):
-    nap = State()
-    rut = State()
+users = {}
+waiting_deposit = {}
+waiting_withdraw = {}
 
-# ===== DB =====
-async def init_db():
-    async with aiosqlite.connect("data.db") as db:
-        await db.executescript("""
-        CREATE TABLE IF NOT EXISTS users(
-            id INTEGER PRIMARY KEY,
-            balance INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS deposit(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uid INTEGER,
-            amount INTEGER,
-            status TEXT
-        );
-        """)
-        await db.commit()
-
-# ===== UI =====
-def main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("💰 Nạp tiền", callback_data="nap"),
-         InlineKeyboardButton("🏧 Rút tiền", callback_data="rut")],
-        [InlineKeyboardButton("💳 Số dư", callback_data="balance")]
-    ])
+# ===== TIỆN ÍCH =====
+def get_user(uid):
+    if uid not in users:
+        users[uid] = {
+            "balance": 0,
+            "ref": None,
+            "ref_count": 0,
+            "checkin": 0
+        }
+    return users[uid]
 
 # ===== START =====
-@dp.message(CommandStart())
-async def start(m: types.Message):
-    async with aiosqlite.connect("data.db") as db:
-        await db.execute("INSERT OR IGNORE INTO users(id) VALUES(?)", (m.from_user.id,))
-        await db.commit()
-    await m.answer("🤖 OKVIP BOT KHUYẾN MÃI KÍNH CHÀO", reply_markup=main_menu())
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    get_user(uid)
 
-# ===== BALANCE =====
-@dp.callback_query(lambda c: c.data=="balance")
-async def balance(c: types.CallbackQuery):
-    async with aiosqlite.connect("data.db") as db:
-        cur = await db.execute("SELECT balance FROM users WHERE id=?", (c.from_user.id,))
-        bal = (await cur.fetchone())[0]
-    await c.message.answer(f"💳 Số dư: {bal:,} VNĐ")
+    kb = [
+        [InlineKeyboardButton("💳 Nạp tiền", callback_data="deposit"), InlineKeyboardButton("💸 Rút tiền", callback_data="withdraw")],
+        [InlineKeyboardButton("🎁 Gift Code", callback_data="gift"), InlineKeyboardButton("🔥 Sự kiện", callback_data="event")],
+        [InlineKeyboardButton("🏆 Đua Top", callback_data="top"), InlineKeyboardButton("☎ CSKH", callback_data="support")]
+    ]
 
-# ===== NẠP =====
-@dp.callback_query(lambda c: c.data=="nap")
-async def nap(c: types.CallbackQuery, state: FSMContext):
-    await state.set_state(Form.nap)
-    await c.message.answer("💰 Nhập số tiền cần nạp (1 = 1.000đ):")
+    await update.message.reply_text("🎛 VIP PANEL", reply_markup=InlineKeyboardMarkup(kb))
 
-@dp.message(Form.nap)
-async def nap_process(m: types.Message, state: FSMContext):
-    if not m.text.isdigit():
-        return await m.answer("❌ Nhập số hợp lệ")
+# ===== CALLBACK =====
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
 
-    amount = int(m.text) * 1000
-    bonus = int(amount * 0.03)
-    total = amount + bonus
+    if q.data == "deposit":
+        waiting_deposit[uid] = True
+        await q.message.reply_text("💳 Nhập số tiền cần nạp (VD: 50 = 50.000đ)\nQuy ước: 1 = 1000đ")
 
-    async with aiosqlite.connect("data.db") as db:
-        cur = await db.execute("INSERT INTO deposit(uid,amount,status) VALUES (?,?,?)",
-                               (m.from_user.id, amount, "pending"))
-        await db.commit()
-        dep_id = cur.lastrowid
+    elif q.data == "withdraw":
+        waiting_withdraw[uid] = True
+        await q.message.reply_text("💸 Nhập số tiền cần rút (tối thiểu 100 = 100.000đ)")
 
-    await state.clear()
+    elif q.data == "gift":
+        await q.message.reply_text("🎁 Nhập gift code:")
 
-    text = (
-        "🏦 THÔNG TIN CHUYỂN KHOẢN\n\n"
-        "Ngân hàng: MB BANK\n"
-        "Chủ TK: NGUYEN VAN A\n"
-        "STK: 0123456789\n"
-        f"Nội dung: OKVIP {m.from_user.id}\n\n"
-        f"💰 Số tiền: {amount:,} VNĐ\n"
-        f"🎁 Thưởng +3%: {bonus:,} VNĐ\n"
-        f"👉 Nhận: {total:,} VNĐ"
-    )
+    elif q.data == "event":
+        await q.message.reply_text("🔥 Hiện không có sự kiện")
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("✅ ĐÃ CHUYỂN", callback_data=f"confirm_{dep_id}")],
-        [InlineKeyboardButton("❌ HỦY GIAO DỊCH", callback_data=f"cancel_{dep_id}")]
-    ])
+    elif q.data == "top":
+        await q.message.reply_text("🏆 Bảng đua top đang cập nhật")
 
-    await m.answer(text, reply_markup=kb)
+    elif q.data == "support":
+        await q.message.reply_text("☎ Gửi nội dung, admin sẽ phản hồi")
 
-@dp.callback_query(lambda c: c.data.startswith("confirm_"))
-async def confirm_nap(c: types.CallbackQuery):
-    dep_id = int(c.data.split("_")[1])
+# ===== TEXT =====
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    text = update.message.text.strip()
+    user = get_user(uid)
 
-    async with aiosqlite.connect("data.db") as db:
-        cur = await db.execute("SELECT uid,amount FROM deposit WHERE id=? AND status='pending'", (dep_id,))
-        row = await cur.fetchone()
-        if not row:
-            return await c.message.answer("❌ Giao dịch không tồn tại hoặc đã xử lý")
+    # NẠP
+    if uid in waiting_deposit:
+        del waiting_deposit[uid]
+        try:
+            amount = int(text)
+            vnd = amount * 1000
+            bonus = int(vnd * 0.03)
+            total = vnd + bonus
 
-    uid, amount = row
+            user["balance"] += total
 
-    await bot.send_message(
-        ADMIN_ID,
-        f"🔔 DUYỆT NẠP\nUID: {uid}\n💰 {amount:,}\n"
-        f"/duyet_{dep_id}\n/huy_{dep_id}"
-    )
-
-    await c.message.answer("⏳ Đã gửi admin duyệt")
-
-@dp.callback_query(lambda c: c.data.startswith("cancel_"))
-async def cancel_nap(c: types.CallbackQuery):
-    dep_id = int(c.data.split("_")[1])
-    async with aiosqlite.connect("data.db") as db:
-        await db.execute("UPDATE deposit SET status='cancel' WHERE id=?", (dep_id,))
-        await db.commit()
-    await c.message.answer("❌ Đã hủy giao dịch")
-
-# ===== ADMIN DUYỆT =====
-@dp.message(lambda m: m.text.startswith("/duyet_"))
-async def admin_duyet(m: types.Message):
-    if m.from_user.id != ADMIN_ID:
+            await update.message.reply_text(
+                f"✅ Ghi nhận nạp {vnd:,}đ\nThưởng +3%: {bonus:,}đ\nSố dư: {user['balance']:,}đ"
+            )
+        except:
+            await update.message.reply_text("❌ Sai định dạng")
         return
 
-    dep_id = int(m.text.split("_")[1])
+    # RÚT
+    if uid in waiting_withdraw:
+        del waiting_withdraw[uid]
+        try:
+            amount = int(text)
+            if amount < 100:
+                await update.message.reply_text("❌ Rút tối thiểu 100 = 100.000đ")
+                return
 
-    async with aiosqlite.connect("data.db") as db:
-        cur = await db.execute("SELECT uid,amount FROM deposit WHERE id=? AND status='pending'", (dep_id,))
-        row = await cur.fetchone()
-        if not row:
-            return await m.answer("❌ Giao dịch không hợp lệ")
+            vnd = amount * 1000
+            if user["balance"] < vnd:
+                await update.message.reply_text("❌ Không đủ số dư")
+                return
 
-        uid, amount = row
-        bonus = int(amount * 0.03)
-        total = amount + bonus
-
-        await db.execute("UPDATE deposit SET status='done' WHERE id=?", (dep_id,))
-        await db.execute("UPDATE users SET balance = balance + ? WHERE id=?", (total, uid))
-        await db.commit()
-
-    await bot.send_message(uid, f"✅ Nạp thành công {total:,} VNĐ")
-    await m.answer("Đã duyệt")
-
-@dp.message(lambda m: m.text.startswith("/huy_"))
-async def admin_huy(m: types.Message):
-    if m.from_user.id != ADMIN_ID:
+            user["balance"] -= vnd
+            await update.message.reply_text(f"✅ Đã gửi yêu cầu rút {vnd:,}đ")
+        except:
+            await update.message.reply_text("❌ Sai định dạng")
         return
-    dep_id = int(m.text.split("_")[1])
 
-    async with aiosqlite.connect("data.db") as db:
-        await db.execute("UPDATE deposit SET status='cancel' WHERE id=?", (dep_id,))
-        await db.commit()
+    # CSKH
+    await context.bot.send_message(ADMIN_ID, f"📩 CSKH từ {uid}: {text}")
+    await update.message.reply_text("📨 Đã gửi admin")
 
-    await m.answer("Đã hủy")
+# ===== MAIN =====
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-# ===== RUN =====
-async def main():
-    await init_db()
-    await dp.start_polling(bot)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+    print("BOT RUNNING...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
